@@ -3,7 +3,9 @@ from fastapi import FastAPI, UploadFile, File, Form
 import fitz  # PyMuPDF for PDFs
 from docx import Document
 import os
+import json
 from dotenv import load_dotenv
+import re
 
 # Load environment variables
 load_dotenv()
@@ -32,7 +34,7 @@ async def generate_file_structure(
     prd_text: str = Form(None),  
     tech_stack: str = Form(...)
 ):
-    """Reads PRD document and generates a detailed, optimized file structure for Django+React or Node.js+React."""
+    """Reads PRD document and generates a detailed, optimized file structure in JSON format for Django+React or Node.js+React."""
     try:
         # Step 1: Extract PRD text from document or take direct input
         if file:
@@ -53,102 +55,62 @@ async def generate_file_structure(
         if tech_stack.lower() not in ["django-react", "nodejs-react"]:
             return {"error": "Invalid tech stack. Choose 'django-react' or 'nodejs-react'."}
 
-        # Step 2: Define Fixed Base File Structure
-        django_react_structure = """
-        /project-root
-        ├── /client  (Frontend - React)
-        │   ├── /public
-        │   │   ├── /images        # Static images
-        │   ├── /src
-        │   │   ├── /components
-        │   │   ├── /pages
-        │   │   ├── /redux         # Redux store & slices for state management
-        │   │   ├── /context       # Context API for lightweight state management
-        │   │   ├── /router        # React Router for navigation
-        │   │   ├── index.js
-        │   │   ├── App.js
-        │   ├── /tests             # Unit & integration tests
-        │   │   ├── unit
-        │   │   ├── integration
-        │   ├── package.json
-        │   ├── .env
-        │   ├── README.md
-        ├── /server  (Backend - Django)
-        │   ├── /app
-        │   │   ├── /models
-        │   │   ├── /views
-        │   │   ├── /serializers
-        │   │   ├── /urls
-        │   │   ├── /tests          # Django unit tests
-        │   │   │   ├── test_auth.py
-        │   │   ├── /permissions
-        │   │   ├── settings.py
-        │   │   ├── urls.py
-        │   │   ├── wsgi.py
-        │   ├── /docs                # API documentation
-        │   │   ├── API_REFERENCE.md
-        │   ├── manage.py
-        │   ├── requirements.txt
-        │   ├── .env
-        │   ├── README.md
-        ├── /deployment
-        │   ├── Dockerfile
-        │   ├── docker-compose.yml
-        │   ├── nginx.conf
-        """
+        # Step 2: Define Base JSON Structure
+        base_structure = {
+            "project-root": {
+                "client": {
+                    "public": {"images": {}},
+                    "src": {
+                        "components": {},
+                        "pages": {},
+                        "redux": {},
+                        "context": {},
+                        "router": {},
+                        "index.js": "React entry point",
+                        "App.js": "Main application component"
+                    },
+                    "package.json": "Frontend dependencies",
+                    ".env": "Environment variables",
+                    "README.md": "Project description"
+                },
+                "server": {
+                    "app" if tech_stack.lower() == "django-react" else "src": {
+                        "models": {},
+                        "routes" if tech_stack.lower() == "nodejs-react" else "views": {},
+                        "controllers" if tech_stack.lower() == "nodejs-react" else "serializers": {},
+                        "middleware" if tech_stack.lower() == "nodejs-react" else "permissions": {},
+                        "tests": {
+                            "test_auth.py" if tech_stack.lower() == "django-react" else "test_auth.js": "Unit tests"
+                        },
+                        "settings.py" if tech_stack.lower() == "django-react" else "config": {},
+                        "urls.py" if tech_stack.lower() == "django-react" else "server.js": "Main backend entry",
+                    },
+                    "docs": {"API_REFERENCE.md": "API documentation"},
+                    "requirements.txt" if tech_stack.lower() == "django-react" else "package.json": "Backend dependencies",
+                    ".env": "Environment variables",
+                    "README.md": "Project description"
+                },
+                "deployment": {
+                    "Dockerfile": "Docker configuration",
+                    "docker-compose.yml": "Container orchestration",
+                    "nginx.conf": "Nginx reverse proxy"
+                }
+            }
+        }
 
-        node_react_structure = """
-        /project-root
-        ├── /client  (Frontend - React)
-        │   ├── /public
-        │   │   ├── /images        # Static images
-        │   ├── /src
-        │   │   ├── /components
-        │   │   ├── /pages
-        │   │   ├── /redux         # Redux store & slices for state management
-        │   │   ├── /context       # Context API for lightweight state management
-        │   │   ├── /router        # React Router for navigation
-        │   │   ├── index.js
-        │   │   ├── App.js
-        │   ├── package.json
-        │   ├── .env
-        │   ├── README.md
-        ├── /server  (Backend - Node.js/Express)
-        │   ├── /src
-        │   │   ├── /models
-        │   │   ├── /routes
-        │   │   ├── /controllers
-        │   │   ├── /middleware
-        │   │   ├── /config
-        │   │   ├── /tests          # Mocha/Chai unit tests
-        │   │   │   ├── test_auth.js
-        │   ├── /docs               # API documentation
-        │   │   ├── API_REFERENCE.md
-        │   ├── server.js
-        │   ├── package.json
-        │   ├── .env
-        │   ├── README.md
-        ├── /deployment
-        │   ├── Dockerfile
-        │   ├── docker-compose.yml
-        │   ├── nginx.conf
-        """
-
-        base_structure = django_react_structure if tech_stack.lower() == "django-react" else node_react_structure
-
-        # Step 3: Optimized Prompt for GPT-4o
+        # Step 3: Optimized Prompt for GPT-4o (Ask for JSON format)
         prompt = f"""
-        You are an expert software architect. Generate a **detailed and structured project directory** based on the provided PRD.
+        You are an expert software architect. Based on the provided PRD, generate a **detailed project directory structure** in **JSON format**.
 
         **Instructions:**
-        - Use a **tree format** for the directory.
-        - Ensure **best practices** for scalability and maintainability.
-        - Include necessary folders such as **tests, documentation, configurations, and state management**.
-        - Generate missing files dynamically based on PRD content.
+        - Use a JSON **nested dictionary format**.
+        - **Keys represent directories or files**.
+        - **Values describe purpose or contain subdirectories**.
+        - Ensure **best practices** for the chosen tech stack ({tech_stack.upper()}).
 
-        **Base Structure for {tech_stack.upper()}:**
-        ```
-        {base_structure}
+        **Base JSON Structure:**
+        ```json
+        {json.dumps(base_structure, indent=4)}
         ```
 
         **PRD Document for Context:**
@@ -156,7 +118,7 @@ async def generate_file_structure(
         {prd_text}
         ```
 
-        Generate the complete directory structure, ensuring that **all PRD features are covered**.
+        Generate the **final directory structure in JSON format** while ensuring that **all PRD features are included**.
         """
 
         # Step 4: Call OpenAI GPT-4o
@@ -166,12 +128,24 @@ async def generate_file_structure(
                 {"role": "system", "content": "You are a highly experienced software architect specializing in full-stack development."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=3000
+            max_tokens=4000
         )
 
-        generated_structure = response.choices[0].message.content
+        # Step 5: Parse JSON response
+        gpt_response = response.choices[0].message.content.strip()
 
-        return {"file_structure": generated_structure}
+        # Remove markdown-style code blocks (```json ... ```)
+        gpt_response_cleaned = re.sub(r"```json|```", "", gpt_response).strip()
+
+        try:
+            file_structure_json = json.loads(gpt_response_cleaned)
+        except json.JSONDecodeError as e:
+            return {
+                "error": f"GPT response is not valid JSON: {str(e)}",
+                "raw_response": gpt_response
+            }
+
+        return {"file_structure": file_structure_json}
 
     except Exception as e:
         return {"error": str(e)}
